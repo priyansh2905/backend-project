@@ -339,6 +339,131 @@ const updateUserCoverImage = asyncHandler( async (req, res) => {
     )
 })
 
+const getUserChannelProfile = asyncHandler( async (req, res) => { 
+    const {username} = req.params
+
+    if(!username?.trim()){
+        throw new ApiError(400, "Username is missing")
+    }
+
+    const channel = await User.aggregate([  // writing aggregate pipelines(stages)
+        {
+            $match: {
+                username: username?.toLowerCase() // stage 1 : filtering on the basis of username
+            }
+        },
+        {
+            $lookup: {                           // stage 2 & 3: Performs a left outer join to a collection in the same database to filter in documents from the "joined" collection for processing. The $lookup stage adds a new array field to each input document. The new array field contains the matching documents from the "joined" collection.  
+                from: "subscriptions",
+                localField: "_id",
+                foreignField: "channel",
+                as: "subscribers"
+            }
+        },
+        {
+            $lookup: {
+                from: "subscriptions",
+                localField: "_id",
+                foreignField: "subscriber",
+                as: "subscribedTo" 
+            }
+        },
+        {
+            $addFields: {                       // stage 4 : adding new fields
+                subscribersCount: {
+                    $size: "$subscribers"
+                },
+                channelsSubscribedToCount: {
+                    $size: "$subscribedTo"
+                },
+                isSubscribed: {
+                    $cond: {
+                        if: {$in: [req.user?._id, "subscribers.subscriber"]},
+                        then: true,
+                        else: false
+                    }
+                }
+            }
+        },
+        {
+            $project: {         // stage 5 : project only the fields you want to display
+                fullName: 1,
+                username: 1,
+                subscribersCount: 1,
+                channelsSubscribedToCount: 1,
+                isSubscribed: 1,
+                avatar: 1,
+                coverImage: 1,
+                email: 1
+            }
+        }
+    ])
+
+    if(!channel?.length){
+        throw new ApiError(404, "Channel does not exists")
+    }
+
+    return res.status(200).json(
+        new ApiResponse(
+            200,
+            channel[0],
+            "Channel fetched successfully"
+        )
+    )
+})
+
+const getWatchHistory = asyncHandler( async (req, res) => {
+    const user = await User.aggregate([
+        {
+            $match: {
+                _id: new mongoose.Types.ObjectId(req.user._id)
+            }
+        },
+        {
+            $lookup: {
+                from: "videos",
+                localField: "watchHistory",
+                foreignField: "_id",
+                as: "watchHistory",
+                pipeline: [
+                    {
+                        $lookup: {
+                            from: "users",
+                            localField: "owner",
+                            foreignField: "_id",
+                            as: "owner",
+                            pipeline: [
+                                {
+                                    $project: {
+                                        fullName: 1,
+                                        username: 1,
+                                        avatar: 1
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        $addFields: {
+                            owner: {
+                                $first: "$owner"
+                            }
+                        }
+                    }
+                ]
+            }
+        }
+    ])
+
+    return res.status(200).json(
+        new ApiResponse(
+            200,
+            user[0].watchHistory,
+            "Watch history fetched successfully"
+        )
+    )
+})
+
 export {
     registerUser,
     loginUser,
@@ -348,5 +473,7 @@ export {
     getCurrentUser,
     updateAccountDetails,
     updateUserAvatar,
-    updateUserCoverImage
+    updateUserCoverImage,
+    getUserChannelProfile,
+    getWatchHistory
 }
